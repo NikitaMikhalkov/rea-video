@@ -1,6 +1,7 @@
 """decompose(): the end-to-end reverse-engineering pass for one video."""
 from __future__ import annotations
 
+import copy
 import hashlib
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -8,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import SCHEMA, __version__
+from . import MEDIACORE_EVIDENCE, SCHEMA, __version__
 from .assets import detect_embedded, material_summary
 from .audio import analyze_audio, merge_audio_with_vlm, speaks_in
 from .sound_source import MUSIC_ZH, classify_sound_sources, per_clip_audio
@@ -89,6 +90,9 @@ def decompose(video: str | Path, out_dir: str | Path, *, use_vlm: bool = False, 
               platform_meta: dict | None = None, stems: bool = True, memory: bool = True, packaging: bool = True, asr: bool = True,
               lang: str = "zh", speakers: bool = True) -> dict:
     lang = set_lang(lang)
+    from .overlay import reset_ocr_status
+
+    reset_ocr_status()
     require_tools()
     t0 = time.time()
     video = Path(video).expanduser().resolve()
@@ -338,11 +342,20 @@ def decompose(video: str | Path, out_dir: str | Path, *, use_vlm: bool = False, 
                          source="vocals_stem" if on_stem else "mix")
         else:
             heard = {"ok": False, "reason": "not_installed"}
-        if heard.get("ok") and speech.settle(heard, audio.setdefault("voice", {}), info.duration, on_stem=on_stem) and on_stem:
-            from .audio import refine_with_stems
+        if heard.get("ok"):
+            candidates = copy.deepcopy(heard)
+            voice = audio.setdefault("voice", {})
+            voice_before = copy.deepcopy(voice)
+            turned = speech.settle(heard, voice, info.duration, on_stem=on_stem)
+            write_json(out / "asr-candidates.json", candidates)
+            write_json(out / "asr-settled.json", copy.deepcopy(heard.get("lines") or []))
+            write_json(out / "asr-filter.json", {"dropped": len(candidates.get("lines") or []) - len(heard.get("lines") or []),
+                                                "turned": turned, "voice_before": voice_before, "voice_after": copy.deepcopy(voice)})
+            if turned and on_stem:
+                from .audio import refine_with_stems
 
-            # sung or spoken, measured only where the transcript says someone is heard
-            refine_with_stems(audio, stem_info["vocals"], repetition=False)
+                # sung or spoken, measured only where the transcript says someone is heard
+                refine_with_stems(audio, stem_info["vocals"], repetition=False)
     if heard.get("ok") and heard.get("lines"):  # how each line is said, for the script and the voice-over
         from . import prosody
         from .media import extract_audio
@@ -355,7 +368,7 @@ def decompose(video: str | Path, out_dir: str | Path, *, use_vlm: bool = False, 
         except Exception as exc:  # noqa: BLE001  an extra: the breakdown goes on without it
             LOG.warning("line delivery measure failed: %s", str(exc)[:160])
     breakdown = {
-        "schema": SCHEMA, "tool": {"name": "rea-video", "version": __version__}, "lang": lang,
+        "schema": SCHEMA, "tool": {"name": "rea-video", "version": __version__, "mediacore_evidence": MEDIACORE_EVIDENCE}, "lang": lang,
         "source": {"path": str(video), "filename": video.name, "sha256_head": _sha256_head(video), "width": info.width,
                    "height": info.height, "fps": round(info.fps, 3), "duration": round(info.duration, 3), "vcodec": info.vcodec,
                    "aspect_ratio": info.aspect_ratio, "has_audio": info.has_audio, "rotation": info.rotation},
@@ -369,6 +382,10 @@ def decompose(video: str | Path, out_dir: str | Path, *, use_vlm: bool = False, 
         "speakers": who,
         "per_clip_audio": per_clip_audio(str(video), [s.start for s in shots[1:]], info.duration) if info.has_audio else {},
     }
+    if ocr:
+        from .overlay import ocr_status
+
+        breakdown["analysis"]["ocr_status"] = ocr_status()
     if pack is not None:
         breakdown["packaging"] = round_floats(pack)
     if memory:

@@ -32,7 +32,7 @@ import cv2
 import numpy as np
 
 from .media import VideoInfo, extract_frame, iter_frames
-from .overlay import get_ocr
+from .overlay import get_ocr, invoke_ocr
 from .util import LOG, read_image, write_image
 
 OCR_FPS = 2.0
@@ -347,7 +347,7 @@ def ocr_pass(path: str | Path, info: VideoInfo, max_calls: int = OCR_MAX) -> tup
             continue
         prev_small = small
         try:
-            res, _ = ocr(f)
+            res, _ = invoke_ocr(ocr, f)
         except Exception as exc:  # pragma: no cover
             LOG.debug("ocr failed at %.2f: %s", t, exc)
             res = None

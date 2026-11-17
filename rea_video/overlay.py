@@ -35,6 +35,29 @@ _REC_MODELS = {
 # 레시피" -> "피 극궁어") or drops it under the score floor. Subtitles and captions are upright anyway.
 _NO_ANGLE_CLS = {"ko"}
 _OCR: dict = {}  # language -> RapidOCR instance, or None when it could not be loaded
+_OCR_STATUS = {"frames": 0, "failed": 0, "init_failed": False, "reason": ""}
+
+
+def reset_ocr_status() -> None:
+    _OCR_STATUS.update(frames=0, failed=0, init_failed=False, reason="")
+
+
+def ocr_status() -> dict:
+    status = dict(_OCR_STATUS)
+    status["ok"] = bool(status["frames"]) and not status["failed"] and not status["init_failed"]
+    if not status["ok"] and not status["reason"]:
+        status["reason"] = "no frames attempted"
+    return status
+
+
+def invoke_ocr(ocr, frame):
+    _OCR_STATUS["frames"] += 1
+    try:
+        return ocr(frame)
+    except Exception as exc:
+        _OCR_STATUS["failed"] += 1
+        _OCR_STATUS["reason"] = f"frame failed: {type(exc).__name__}"
+        raise
 
 
 def ocr_lang() -> str:
@@ -119,6 +142,9 @@ def get_ocr():
         except Exception as exc:  # pragma: no cover - optional dependency / offline
             LOG.warning("OCR disabled (pip install 'rea-video[ocr]' to enable; lang=%s): %s", lang, exc)
             _OCR[lang] = None
+            _OCR_STATUS.update(init_failed=True, reason=f"initialization failed: {type(exc).__name__}")
+    if _OCR[lang] is None and not _OCR_STATUS["init_failed"]:
+        _OCR_STATUS.update(init_failed=True, reason="initialization failed")
     return _OCR[lang]
 
 
@@ -183,7 +209,7 @@ def ocr_frames(frames: list[np.ndarray], times: list[float], max_frames: int = 4
             scale = 720 / w
             f = cv2.resize(f, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
         try:
-            res, _ = ocr(f)
+            res, _ = invoke_ocr(ocr, f)
         except Exception as exc:  # pragma: no cover
             LOG.debug("ocr failed: %s", exc)
             continue
