@@ -130,6 +130,9 @@ def cmd_apply_review(args) -> int:
 
     log = apply_answers(b, answers, by=args.by or pref("reviewer"))
     b = finalize(b, out)
+    from .util import write_json
+
+    write_json(out / "review-apply-log.json", log)
     for p in log["problems"]:
         print(f"跳过 {p}")
     if log.get("unanswered"):

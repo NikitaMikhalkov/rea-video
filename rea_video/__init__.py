@@ -2,4 +2,4 @@
 
 __version__ = "0.1.0"
 SCHEMA = "rea_video.breakdown.v1"
-MEDIACORE_EVIDENCE = "07dd587-evidence-v1"
+MEDIACORE_EVIDENCE = "07dd587-evidence-v2"
